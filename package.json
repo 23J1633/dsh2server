@@ -1,0 +1,51 @@
+{
+  "name": "dsh2server",
+  "version": "0.1.0",
+  "private": false,
+  "description": "DeepSeek Harness plugin: connects the local dsh instance outbound to a central relay server over a fixed HTTP + WebSocket API, streaming live work status and workspace/session state and accepting remote control operations.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh-bundle",
+    "remote-control",
+    "websocket",
+    "relay"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "scripts",
+    "examples",
+    "php",
+    "cordis.patch.yml",
+    "README.md",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "relay": "node examples/server.js",
+    "show-key": "node scripts/show-key.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "license": "MIT"
+}

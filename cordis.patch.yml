@@ -1,0 +1,140 @@
+# dsh2server — bundle patch layer.
+#
+# Installing this bundle into a profile (`dsh plugin --profile <name> add <this package>`)
+# appends it to `dsh.profile.bundles`, so this layer is applied after `@deepseek-ai/dsh-base`
+# (and after any other bundle already listed) and before the profile's own
+# `cordis.patch.yml` and any `--patch` overlay.
+#
+# `name` refers to the installed package by name so Node resolution finds the code;
+# everything the plugin needs is a config row here.
+#
+# ── The one value you must fill in ────────────────────────────────────────────────
+#   endpoint: the base URL of your relay server API, for example:
+#       endpoint: 'https://example.com/dsh-api'
+#
+#   It accepts a single URL, a list of URLs, or a comma-separated string, and
+#   every URL may be http:// or https:// independently:
+#
+#       endpoint:
+#         - 'https://example.com/dsh-api'      # reachable from anywhere
+#         - 'http://10.0.0.5:8787/dsh-api'     # LAN relay for a local console
+#
+#   Each endpoint gets its own independent connection: one being down, slow, or
+#   revoked never disturbs the others, and all of them see the same instance
+#   state and the same event numbering.
+#
+#   An empty endpoint keeps the plugin loaded but idle (no outbound traffic).
+#   The environment variable `DSH2SERVER_ENDPOINT` is used as a fallback
+#   when `endpoint` is empty, so a deployment can set it without editing YAML.
+#
+#   Plain HTTP is fully supported (the plugin warns once at startup because the
+#   instance key then travels unencrypted). For HTTPS with a private CA, point
+#   `NODE_EXTRA_CA_CERTS` at the CA bundle; for a self-signed certificate, use
+#   `NODE_TLS_REJECT_UNAUTHORIZED=0` only on a network you already trust.
+#
+#   You never have to edit this file: once the bundle is installed, the dsh web
+#   GUI grows a "dsh2server" tab under Settings → Plugins where the endpoint and
+#   transport can be set and this machine's instance key can be copied. Whatever
+#   is set there lands in <DSH_HOME>/dsh2server/config.json and wins over the
+#   matching key below, key by key — so this row keeps owning the deployment
+#   posture while the GUI owns the values an operator changes while working.
+#
+# Every other key below is optional and shown with its built-in default; delete
+# the ones you do not need. A patch replaces a row's whole `config`, so restate
+# any key you rely on when you override this row in your profile's own patch.
+
+- insert:
+    - id: dsh2server
+      name: 'dsh2server'
+      config:
+        # ── required ────────────────────────────────────────────────────────────
+        endpoint: ''
+
+        # ── instance identity and key ───────────────────────────────────────────
+        # No key value is needed here. On first start the plugin generates a
+        # unique key for this machine, stores it in
+        #   <DSH_HOME>/dsh2server/identity.json   (mode 0600)
+        # and prints it once in the dsh log:
+        #   [dsh2server] instance key: dshk_…  ← add this to your server
+        # The server keeps one entry per machine, so it can manage many dsh
+        # installs independently. Revoking one key disconnects only that machine.
+        #
+        # Set `key` only to pin the secret yourself (e.g. from a secret manager);
+        # an explicitly configured key is never written to disk.
+        key: ''
+        # Identity file location. '' = <DSH_HOME>/dsh2server/identity.json
+        keyFile: ''
+        # How the key travels: 'hello' (first frame, works with every WebSocket
+        # client), 'query' (?key=… on the handshake URL), 'header' (Authorization
+        # header; requires a WebSocket implementation with header support).
+        # The HTTP carrier always supports all three.
+        authMode: 'hello'
+
+        # ── identity ────────────────────────────────────────────────────────────
+        # Stable identifier for this machine/instance. '' = read from the identity
+        # file, or derived from the host name and the DSH_HOME path.
+        instanceId: ''
+        # Human-readable label shown by the server ('' = host name).
+        displayName: ''
+
+        # ── transport ───────────────────────────────────────────────────────────
+        # 'auto' tries WebSocket and falls back to HTTP long-poll; 'ws' and 'http'
+        # pin one transport.
+        transport: 'auto'
+        # Paths appended to `endpoint`.
+        wsPath: '/ws'
+        eventsPath: '/events'
+        inboxPath: '/inbox'
+
+        # ── liveness ────────────────────────────────────────────────────────────
+        heartbeatMs: 30000
+        heartbeatTimeoutMs: 90000
+        requestTimeoutMs: 30000
+        pollWaitMs: 25000
+
+        # ── reconnection ────────────────────────────────────────────────────────
+        reconnect: true
+        reconnectInitialDelayMs: 1000
+        reconnectMaxDelayMs: 60000
+        reconnectFactor: 2
+        reconnectJitterRatio: 0.2
+
+        # ── outbound buffering (memory only; the server stores nothing) ─────────
+        bufferSize: 2000
+        batchSize: 50
+        batchIntervalMs: 200
+        maxPayloadBytes: 1048576
+
+        # ── what to stream without being asked ──────────────────────────────────
+        # Topics always subscribed: instance | sessions | jobs | approvals | goals
+        autoSubscribe:
+          - instance
+          - sessions
+          - jobs
+          - approvals
+        # Per-session live event streams: 'none' | 'running' | 'all'
+        autoSubscribeSessions: 'running'
+
+        # ── interactive forwarding (opt-in; local UI stays the default answerer) ─
+        forwardApprovals: false
+        forwardQuestions: false
+        interactiveTimeoutMs: 300000
+
+        # ── remote control surface ──────────────────────────────────────────────
+        allowRemoteControl: true
+        allowRemotePrompt: true
+        allowRemoteCommand: true
+        allowRemoteFileContent: false
+        pauseQueueLimit: 100
+
+        # ── safety rails ────────────────────────────────────────────────────────
+        # When non-empty, only sessions whose working directory starts with one of
+        # these prefixes may be listed or controlled.
+        allowedCwdPrefixes: []
+        # When non-empty, inbound requests from these server IPs are rejected.
+        # (Informational only: it is checked against the connected socket.)
+        deniedServerAddresses: []
+
+        # ── diagnostics ─────────────────────────────────────────────────────────
+        # 'silent' | 'error' | 'warn' | 'info' | 'debug'
+        logLevel: 'info'

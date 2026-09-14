@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "dsh2server 的机器白名单示例。",
+    "",
+    "每一台 dsh 在首次启动时自己生成一个唯一 key（日志里会打印，",
+    "也可以用 `node scripts/show-key.js` 读取），把它登记到这里即可。",
+    "",
+    "· 一个 key 对应一台机器，机器之间完全隔离。",
+    "· 删除某个 key = 立即吊销该机器（它下一次重连会被拒绝，最长 60 秒生效）。",
+    "· 本文件是服务器唯一需要持久化的东西：它是凭据，不是业务数据。",
+    "· 文件被修改后参考实现会自动重新加载，无需重启。",
+    "· label 只是给人看的备注；instanceId 可选，填了便于对账。"
+  ],
+  "keys": [
+    {
+      "key": "dshk_REPLACE_WITH_THE_KEY_PRINTED_BY_THE_PLUGIN_000",
+      "label": "办公室台式机",
+      "instanceId": "dsh-1a2b3c4d5e6f",
+      "addedAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "key": "dshk_REPLACE_WITH_ANOTHER_MACHINES_KEY_00000000000",
+      "label": "笔记本",
+      "addedAt": "2026-01-02T00:00:00.000Z"
+    }
+  ]
+}
