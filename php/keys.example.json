@@ -1,0 +1,8 @@
+{
+  "_comment": [
+    "Copy this file to keys.json for local testing.",
+    "Never commit keys.json or a real instance key.",
+    "Generate a key through the relay admin API or the DSH plugin pairing flow."
+  ],
+  "keys": []
+}

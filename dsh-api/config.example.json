@@ -1,0 +1,36 @@
+{
+  "host": "0.0.0.0",
+  "port": 50443,
+  "basePath": "/dsh-api",
+
+  "tls": {
+    "cert": "/opt/1panel/www/sites/Main/ssl/fullchain.pem",
+    "key": "/opt/1panel/www/sites/Main/ssl/privkey.pem",
+    "watchMs": 600000
+  },
+
+  "dataDir": "/home/23j1633/.dsh-relay",
+
+  "eventBufferSize": 2000,
+  "maxPayloadBytes": 1048576,
+  "heartbeatMs": 30000,
+  "offlineAfterMs": 90000,
+  "helloTimeoutMs": 20000,
+
+  "requestTimeoutMs": 120000,
+  "methodTimeoutMs": {
+    "session.prompt": 300000,
+    "command.run": 300000,
+    "session.create": 180000,
+    "session.fork": 180000,
+    "session.history": 180000
+  },
+
+  "autoSubscribe": {
+    "topics": ["instance", "sessions", "jobs", "approvals", "goals"],
+    "sessions": [],
+    "assistantStream": false
+  },
+
+  "consoleBacklogLimit": 500
+}

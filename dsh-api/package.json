@@ -1,0 +1,22 @@
+{
+  "name": "dsh-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "dsh2server 服务器侧中转实现（WebSocket + HTTP 长轮询）与复刻 dsh 本地界面的控制台",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "sim": "node sim/dsh-sim.js",
+    "selftest": "node scripts/selftest.js",
+    "test:transcript": "node scripts/transcript-test.js",
+    "test": "node --test scripts/relay-test.js && node scripts/transcript-test.js && node scripts/selftest.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "marked": "^15.0.12",
+    "ws": "^8.21.3"
+  }
+}
