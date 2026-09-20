@@ -1,0 +1,10 @@
+# Runtime data and local-only files must never be shipped in the plugin bundle.
+php/data/*.log
+php/data/*.json
+php/data/*.lock
+php/keys.json
+examples/keys.json
+node_modules/
+coverage/
+*.tgz
+*.log

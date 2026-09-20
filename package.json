@@ -25,7 +25,10 @@
     "lib",
     "scripts",
     "examples",
-    "php",
+    "php/dsh-relay.php",
+    "php/keys.example.json",
+    "php/README.md",
+    "php/start-relay.cmd",
     "cordis.patch.yml",
     "README.md",
     "docs"
