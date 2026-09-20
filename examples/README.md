@@ -4,6 +4,19 @@
 
 ## 中文
 
+## A2S 生态（同系列开源仓库）
+
+A2S 按组件拆分为以下同系列仓库，所有者均为 `23J1633`。/ A2S is split into the following sibling repositories, all owned by `23J1633`.
+
+| 仓库 / Repository | 作用 / Role | GitHub |
+|---|---|---|
+| A2Switch | Windows 桌面控制中心 / Windows desktop control center | [23J1633/A2Switch](https://github.com/23J1633/A2Switch) |
+| cc2server | Claude Code 桥接器 / Claude Code bridge | [23J1633/cc2server](https://github.com/23J1633/cc2server) |
+| codex2server | Codex 桥接器 / Codex bridge | [23J1633/codex2server](https://github.com/23J1633/codex2server) |
+| dsh2server | DeepSeek Harness 插件 / DeepSeek Harness plugin | [23J1633/dsh2server](https://github.com/23J1633/dsh2server) |
+| server-api | 中转服务与 Web 控制台 / relay server and Web console | [23J1633/server-api](https://github.com/23J1633/server-api) |
+| a2s_app | Flutter Android 客户端 / Flutter Android client | [23J1633/a2s_app](https://github.com/23J1633/a2s_app) |
+
 这里是一个**零依赖、可直接运行**的 `dsh2server` 服务器实现。它的作用是：
 
 1. **作为规范的可执行样本** —— `docs/API.md` 里每一条约定，这里都有对应代码，而且端到端测试全部跑在它上面（`test/e2e.test.js`、`test/multi-endpoint.test.js`、`test/cordis.test.js`）。

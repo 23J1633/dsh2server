@@ -4,6 +4,19 @@
 
 ## 中文
 
+## A2S 生态（同系列开源仓库）
+
+A2S 按组件拆分为以下同系列仓库，所有者均为 `23J1633`。/ A2S is split into the following sibling repositories, all owned by `23J1633`.
+
+| 仓库 / Repository | 作用 / Role | GitHub |
+|---|---|---|
+| A2Switch | Windows 桌面控制中心 / Windows desktop control center | [23J1633/A2Switch](https://github.com/23J1633/A2Switch) |
+| cc2server | Claude Code 桥接器 / Claude Code bridge | [23J1633/cc2server](https://github.com/23J1633/cc2server) |
+| codex2server | Codex 桥接器 / Codex bridge | [23J1633/codex2server](https://github.com/23J1633/codex2server) |
+| dsh2server | DeepSeek Harness 插件 / DeepSeek Harness plugin | [23J1633/dsh2server](https://github.com/23J1633/dsh2server) |
+| server-api | 中转服务与 Web 控制台 / relay server and Web console | [23J1633/server-api](https://github.com/23J1633/server-api) |
+| a2s_app | Flutter Android 客户端 / Flutter Android client | [23J1633/a2s_app](https://github.com/23J1633/a2s_app) |
+
 > 本目录保留给 dsh2server 独立使用和兼容性测试。A2S 正式部署请使用仓库根目录的 [`server-api`](../../server-api/)：它支持 Claude、Codex、DSH 共用设备 key、统一设备聚合和多 Agent 控制台，并继续兼容 `/dsh-api` 路径。下面内容描述旧版独立部署。
 
 按 [`docs/API.md`](../docs/API.md)（协议 v1）实现的服务器侧，外加一个复刻 dsh 本地界面的图形化控制台。
