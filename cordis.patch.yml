@@ -76,6 +76,8 @@
         instanceId: ''
         # Human-readable label shown by the server ('' = host name).
         displayName: ''
+        # 'system' follows the computer language; zh-CN and en-US pin the plugin UI.
+        locale: 'system'
 
         # ── transport ───────────────────────────────────────────────────────────
         # 'auto' tries WebSocket and falls back to HTTP long-poll; 'ws' and 'http'
@@ -117,7 +119,7 @@
 
         # ── interactive forwarding (opt-in; local UI stays the default answerer) ─
         forwardApprovals: false
-        forwardQuestions: false
+        forwardQuestions: true
         interactiveTimeoutMs: 300000
 
         # ── remote control surface ──────────────────────────────────────────────

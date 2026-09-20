@@ -1,6 +1,6 @@
 # dsh2server 服务器接口规范
 
-> 版本：协议 v1 · 插件 v0.1.0
+> 版本：协议 v1 · 插件 v1.0.0
 > 面向对象：后端开发者。本文档定义**服务器侧**必须实现的一切；插件已经按此规范实现完成。
 
 ---
@@ -46,7 +46,7 @@
 推论（服务器实现必须满足）：
 
 - 服务器**不需要公网可达之外的任何东西**：不必能访问 dsh 所在机器，不必开放反向端口，不必穿透 NAT。
-- 服务器**不需要持久化任何会话内容**。会话列表、工作目录、事件流、任务状态全部可由插件随时重发（见 [§11](#11-序号补发与断线重连)）。唯一需要落盘的是**实例 key 白名单**（这是凭据，不是业务数据）。
+- 服务器**不持久化会话正文**。会话列表、工作目录、事件流、任务状态均可由插件随时重发（见 [§11](#11-序号补发与断线重连)）；仅持久化**实例 key 白名单**和不含正文的**控制台归档索引**。
 - 服务器进程重启后，所有 dsh 会自动重连并重新推送状态；服务器侧"冷启动"是正常状态，不是故障。
 
 ### 1.2 两种传输，一套协议
@@ -164,7 +164,7 @@ https://example.com/dsh-api
 服务器维护一张**多 key 白名单**，每个 key 对应一台机器：
 
 ```jsonc
-// keys.json —— 这是服务器唯一需要持久化的文件（凭据，不是业务数据）
+// keys.json —— 服务器持久化的实例凭据
 {
   "keys": [
     { "key": "dshk_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "label": "办公室台式机", "instanceId": "dsh-1a2b3c4d5e6f" },
@@ -349,7 +349,7 @@ HTTP 载体允许任意时刻断开：插件会重连并**重发未确认的批�
     "sessionProjections": true, "sessionPersistence": true,
     "sessionList": true, "sessionCreate": true, "sessionPrompt": true,
     "sessionInterrupt": true, "sessionHistory": true, "sessionFork": true,
-    "sessionRename": true, "sessionSearch": true, "sessionSelectModel": true,
+    "sessionRename": true, "sessionArchive": true, "sessionSearch": true, "sessionSelectModel": true,
     "queueUpdate": true, "modelCatalog": true, "commands": true,
     "jobs": true, "goals": true, "approvalPolicy": true,
     "approvalAnswer": true, "questions": false, "workspaces": true,
@@ -363,7 +363,7 @@ HTTP 载体允许任意时刻断开：插件会重连并**重发未确认的批�
     "dshHome": "D:\\dsh\\data",
     "liveSessions": 1,
     "displayName": "办公室台式机",
-    "pluginVersion": "0.1.0",
+    "pluginVersion": "1.0.0",
     "protocolVersion": 1,
     "identityPersisted": true
   }
@@ -582,6 +582,7 @@ HTTP 载体允许任意时刻断开：插件会重连并**重发未确认的批�
 | `sessionController` | 会话列表/历史/搜索/重命名/模型选择不可用（列表退化为"仅内存中的活动会话"） |
 | `sessionPersistence` | 冷会话（磁盘上但当前未加载）不可见 |
 | `workspaceRegistry` | `workspace.list` 退化为按会话 `cwd` 聚合 |
+| `sessionArchive` | 无法把服务器归档同步到主机；仍可只在服务器侧隐藏 |
 | `jobs` / `goals` / `commands` | 对应方法不可用 |
 | `approval` | 审批策略切换不可用 |
 | `userQuestions` | 结构化提问不可用 |
@@ -600,7 +601,7 @@ HTTP 载体允许任意时刻断开：插件会重连并**重发未确认的批�
   "keyFingerprint": "dshk_AbCdEf…9xYz",
   "keyFile": "D:\\dsh\\data\\dsh2server\\identity.json",
   "keyPersisted": true,
-  "plugin": { "name": "dsh2server", "version": "0.1.0" },
+  "plugin": { "name": "dsh2server", "version": "1.0.0" },
   "protocol": 1,
   "uptimeMs": 123456,
   "capabilities": { /* ... */ },
@@ -776,6 +777,13 @@ HTTP 载体允许任意时刻断开：插件会重连并**重发未确认的批�
 #### `session.rename`
 - **params**：`{ "sessionId", "title" }` → **result**：`{ "title": "...", "seq": 123 }`
 - 需要 session-controller；否则 `capability_unavailable`。
+
+#### `session.archive`
+通过 DSH 官方 workspace registry 归档会话，使其从主机本地的工作区列表隐藏。
+
+- **params**：`{ "sessionId": "..." }`
+- **result**：`{ "archived": true, "archivedSessionIds": ["..."] }`
+- 不删除持久化日志或工作目录文件；永久删除会话文件不是 DSH 当前公开 API 的能力。
 
 #### `session.fork`
 从某个完成 turn 的边界分叉出新会话。
@@ -983,7 +991,7 @@ hello.ack（不带 resumeFromSeq）
 一个满足规范的最小后端需要做到：
 
 - [ ] **端点**：`{basePath}/ws`（升级）、`{basePath}/events`（POST）、`{basePath}/inbox`（GET）。至少实现 WebSocket 或 HTTP 之一。
-- [ ] **Key 白名单**：多 key → 多机器；恒定时间比较；持久化（唯一需要落盘的东西）。
+- [ ] **Key 白名单**：多 key → 多机器；恒定时间比较；持久化。
 - [ ] **认证**：按 `authMode` 从 `hello.auth.key` / `Authorization` / `?key=` 取 key；失败发 fatal error 并断开（WS 4401 / HTTP 401）。
 - [ ] **`hello` → `hello.ack`**：必须回，并带上 `resumeFromSeq`（如果有历史水位）。
 - [ ] **`subscribe`**：`hello.ack` 之后主动订阅需要的 topic 与会话。
@@ -1049,3 +1057,184 @@ curl -X POST ... -d '{"method":"session.resume","params":{"sessionId":"session-x
 7. **不要在服务器上存储会话内容**：协议不要求，且一旦存储，其泄露影响远超 key 泄露。若确实需要审计，请单独评估并加密。
 8. **多端点等于多个信任边界**：一台机器同时连多个服务器时，任一服务器的持有者都拥有等同的远程操作能力。只配置你确实要授权的端点；`instance.info` 的 `connections` 会如实暴露这一点，便于审计。
 9. **私有 CA / 自签名证书**：让 Node 信任私有 CA 用 `NODE_EXTRA_CA_CERTS=/path/ca.pem`（推荐）；仅在已完全可信的网络上才使用 `NODE_TLS_REJECT_UNAUTHORIZED=0`。
+
+---
+
+## 14. 扩展能力（PLUGIN-EXT）
+
+协议 v1 之上还有一组成员，用于让云端界面达到本机 UI 的完整度：轨迹视图、消息时间戳、
+点赞点踩、权限预设、Agent 预设、附件、工作区增删改、文件面板、插件管理。
+
+约定与 §0 一致，**能力位是唯一开关**：
+
+- 实现的能力位出现在 `hello.capabilities` 与 `instance.info.capabilities`（布尔值，缺省即 false）；
+- 未实现的方法返回 `unknown_method`，未实现的能力位直接省略——服务器据此隐藏对应 UI；
+- 能力位按**当前组合真实可用的服务**探测，因此同一份插件在不同 profile 下可能报不同的集合；
+  服务器应随时可以用 `instance.info` 重新读取，而不必依赖 `hello` 里的那份快照。
+
+| 能力位 | 覆盖的 UI | 方法 |
+|---|---|---|
+| `sessionEvents` | 轨迹视图、每轮用时、消息时间戳、步数、tok/s、上下文环 | `session.events` |
+| `messageFeedback` | 消息下方的 👍 / 👎 | `message.feedback` |
+| `permissionPresets` | 输入框左侧的权限选择器 | `session.permission` |
+| `agentPresets` | 新会话/会话头的 Agent 预设选择器、设置 → Agent 预设 | `agentPreset.list` / `read` / `select` / `copy` / `delete` |
+| `attachments` | 输入框附件、历史消息里的图片与文件卡 | `attachment.put` / `attachment.get` |
+| `workspaceMutation` | 工作区的增 / 删 / 改名 | `workspace.create` / `workspace.rename` / `workspace.remove` |
+| `fileBrowser` | 右侧栏「文件」面板 | `workspace.fs.list` / `workspace.fs.read` |
+| `pluginManagement` | 设置 → 插件 | `plugin.list` / `plugin.config` / `plugin.setConfig` / `plugin.setEnabled` |
+
+### 14.1 `session.events` —— 原始事件窗口
+
+`session.history` 是**消息对齐视图**：`seq` 是页内序号、`time` 恒为 0，且没有 `turn/start`、
+`step/start`，因此渲染不出轨迹与耗时。`session.events` 直接给出**日志本身**。
+
+- **params**：`{ sessionId, throughSeq, beforeSeq?, limit?, kinds? }`
+  - `throughSeq` 必填，取自 `session/snapshot` 或最近一条 `session/event` 的 `seq`（含该 seq）；
+  - `beforeSeq` 向更早翻页：传上一页的 `oldestSeq`，本页只返回严格更小的 `seq`；
+  - `limit` 默认 500，上限 2000；`kinds` 是可选的事件类型白名单。
+- **result**：`{ events, oldestSeq, newestSeq, hasMore, bufferFloor }`
+  - `events` 按 `seq` **升序**，每条形如 `{ type, seq, time, data, surfaceOp?, sourceEventSeqs?, ignorable? }`；
+  - `seq` 是**日志真实序号**（与实时 `session/event` 同一套），`time` 是**真实 epoch 毫秒**，
+    `data` 与实时同名事件的 `data` 完全一致，因此历史与实时可以按 `seq` 无缝拼接；
+  - 助手消息事件若已有评价，会带上 `feedback: { rating: 'like'|'dislike', updatedAt }`（见 14.2）。
+
+### 14.2 `message.feedback` —— 点赞 / 点踩
+
+- **params**：`{ sessionId, seq, rating: 'like' | 'dislike' | 'none' }`
+  - `seq` 是**该条助手消息对应的 `assistant/message` 事件的日志序号**；`none` 表示撤销。
+- **result**：`{ accepted: true, seq, rating: 'like'|'dislike'|null, updatedAt }`
+- **errors**：`session_not_found`、`not_found`（该 seq 不是助手消息）、`invalid_params`、`conflict`（并发改写）。
+
+**读回**走 14.1：`session.events` 的助手消息事件上带 `feedback` 字段，不需要单独的方法。
+
+**事件**（本机点评价时同步给服务器）：
+
+```jsonc
+{ "topic": "sessions", "kind": "message/feedback",
+  "sessionId": "…", "data": { "seq": 4201, "rating": "like", "at": 1767225600000 } }
+```
+
+### 14.3 `session.permission` —— 权限预设
+
+与本机输入框左侧的三级选择器对应。它与 `session.approvalPolicy` 是**两个轴**：权限预设决定
+「能不能做」，审批策略决定「要不要问人」，两者都保留。
+
+协议只用三个稳定 id：`read-only` / `workspace-write` / `full-access`。部署自己的预设表
+（`dsh-permission-presets` 的 `presets`）由插件负责翻译，因此**部署换个命名也不影响服务器**。
+
+- **params**：`{ sessionId, preset? }`；省略 `preset` 时只读取
+- **result**：`{ preset, available: string[], labels? }`
+  - `labels` 只在部署**显式声明**了显示名时出现，省略时用云端内置文案
+- **errors**：`invalid_params`、`session_not_found`、`capability_unavailable`
+
+**事件**：
+
+```jsonc
+{ "topic": "sessions", "kind": "session/permission",
+  "sessionId": "…", "data": { "sessionId": "…", "preset": "full-access", "at": … } }
+```
+
+> 这是**提权类**操作，建议在服务器侧单独设一个默认关闭的开关（见 §13.6）。
+
+### 14.4 `attachment.put` / `attachment.get` —— 附件与图片
+
+- `attachment.put`：`{ name, mime, dataBase64 }` → `{ attachmentId, name, mime, bytes, kind }`
+  - 单文件上限 **8 MiB**（base64 约 11 MiB），超限返回 `payload_too_large`；串行上传，不做分片。
+- `attachment.get`：`{ attachmentId, maxBytes? }` → `{ attachmentId, name, mime, bytes, truncated: false, dataBase64 }`
+  - 超过 `maxBytes` 返回 `payload_too_large`（**不截断**，避免把半个文件当完整文件）；未知 id 返回 `not_found`。
+
+**在 prompt 里引用**——`session.prompt` 的 `content` 数组接受三种块：
+
+```jsonc
+{ "sessionId": "…", "content": [
+  { "type": "text",  "text": "看看这张图" },
+  { "type": "image", "attachmentId": "att_7f3a", "name": "shot.png" },
+  { "type": "file",  "attachmentId": "att_8c21", "name": "report.pdf" }
+] }
+```
+
+不支持的组合返回 `invalid_params`。附件只在**本进程内**有效：插件重启后 `attachmentId` 失效，
+服务器应重新上传。
+
+### 14.5 `workspace.*` —— 工作区增删改
+
+| 方法 | params | result |
+|---|---|---|
+| `workspace.create` | `{ path, title? }` | `{ workspace }` |
+| `workspace.rename` | `{ id?, path?, title }` | `{ workspace }` |
+| `workspace.remove` | `{ id?, path? }` | `{ removed: true }` |
+
+`id` 与 `path` 二选一，都给以 `id` 为准；`WorkspaceView` 与 `workspace.list` 的 items 同构。
+
+> **`workspace.remove` 只删登记关系，绝不动磁盘目录**，也不会删除其中的会话。
+
+**errors**：`invalid_params`、`not_found`、`forbidden`（路径不在 `allowedCwdPrefixes` 内）
+
+**事件**：
+
+```jsonc
+{ "topic": "sessions", "kind": "workspace/changed",
+  "data": { "action": "created"|"renamed"|"removed", "workspace": WorkspaceView|null, "at": … } }
+```
+
+本机 UI 里的增删改同样会发出这个事件。
+
+### 14.6 `workspace.fs.*` —— 文件面板（只读）
+
+- `workspace.fs.list`：`{ path, workspaceId? }` → `{ path, entries: [{ name, path, type: 'dir'|'file'|'other', size?, binary }], truncated }`
+- `workspace.fs.read`：`{ path, maxBytes?, encoding? }` → `{ path, size, truncated, binary, text?, dataBase64?, mime? }`
+
+文本给 `text`；二进制给 `dataBase64` + `mime`；超过 `maxBytes` 时**截断并置 `truncated: true`**
+（面板是预览，与 `attachment.get` 的拒绝语义不同）。
+
+**写入一律不提供**——改动走 agent 自己的工具，沙箱与审批策略才会在回路里。
+路径必须在 `allowedCwdPrefixes` 内（解析符号链接之后再校验一次），否则 `forbidden`。
+
+### 14.7 `plugin.*` —— 插件管理
+
+- `plugin.list`：无参数 → `{ items: [{ id, name, version, description?, enabled, state, scope, preset?, configurable }] }`
+  - `state` 取 `active | pending | failed | unloading | disabled`；
+  - `scope: 'session'` 的行来自 agent preset 的组合，`preset` 给出所属 preset id。
+- `plugin.config`：`{ id }` → `{ schema, values }`
+  - `schema` 是 **JSON Schema 子集**（`type` / `properties` / `items` / `enum` / `title` / `description` / `default`），
+    由部署的 schemastery 配置声明转换而来，可直接生成表单。
+- `plugin.setConfig`：`{ id, patch }` → `{ values }`（浅合并）
+- `plugin.setEnabled`：`{ id, enabled }` → `{ item }`
+
+**errors**：`not_found`、`invalid_params`、`capability_unavailable`、`disabled`（`allowRemoteControl: false`）
+
+**事件**：`{ "topic": "instance", "kind": "plugin/changed", "data": { "item": PluginView, "at": … } }`
+
+> 与权限预设同档的**高级**操作，建议在服务器侧收在设置面板的高级开关后面。
+> 改动只作用于**本次运行**的 Loader 层，不会改写部署的 `cordis.yml` / `cordis.patch.yml`。
+
+### 14.8 `agentPreset.*` —— Agent 预设
+
+- `agentPreset.list`：无参数 → `{ presets, authorable, modeSelectionEnabled }`
+- `agentPreset.read`：`{ agentPreset }` → 预设文档（至少含 `content`）
+- `agentPreset.select`：`{ sessionId, agentPreset }` → `{ agentPreset }`
+- `agentPreset.copy`：`{ from, agentPreset, name? }` → `{ accepted: true, agentPreset }`
+- `agentPreset.delete`：`{ agentPreset }` → `{ accepted: true }`
+
+列表和读取不会返回本机预设目录路径。选择、复制、删除受插件 `allowRemoteControl` 保护；内置预设
+由 DSH 自身拒绝删除。变更后发送 `agent-preset/changed` 事件，服务器据此刷新名单或会话头。
+
+### 14.9 事件载荷上补充的字段
+
+两个不需要新方法的增强，服务器可直接使用，也可以忽略后自行推导：
+
+- **工具调用的意图**：`tool/call` 事件的 `data.description` 带上模型写在工具参数里的
+  `description`（例如 `Pwsh · Show the relay's view of this test message` 的后半句）；
+  `session.history` 里 `tool-call` 内容块同样带上。原始 `arguments` 字符串保持不变。
+- **每轮的文件改动**：`turn/end` 事件的 `data.files` 给出
+  `[{ path, added, removed }]`，来自该轮 `write` / `edit` 工具结果里的 diff 元数据，按文件聚合。
+
+### 14.10 未实现：`terminal`
+
+PLUGIN-EXT 的 §7（持久终端面板）**有意不实现**，因此不报告 `terminal` 能力位，服务器会自动
+回退到 job 面板。
+
+原因：本 harness 的终端服务（`ctx.terminals`）是**按 Agent 拥有、面向行**的交互模型
+（`spawn` / 文本 + 提交 / 分页读取 scrollback），既没有原始字节流写入，也没有 `cols/rows`
+重排，更没有推送式的输出事件。按 PLUGIN-EXT §7 开头的说明，「看最近一次任务的输出」用
+现有 `job.list` + `job.read` 即可——这正是服务器在缺少该能力位时走的路。

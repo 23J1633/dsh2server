@@ -1,11 +1,16 @@
+[中文](#中文) | [English](#english)
+
 # PHP 测试后端（含内置 HTML 测试台）
+
+## 中文
 
 `dsh-relay.php` 是一个**单文件、零依赖**的 PHP 中转服务器：它实现 `docs/API.md` 里的协议，
 并且自带一个网页调试台，用来验证"插件 ↔ 服务器"整条链路是否通。
 
 ```
 php/dsh-relay.php    中转服务器 + 测试 UI（一个文件搞定）
-php/keys.json        key 白名单（唯一需要落盘的东西；由 relay 自动维护）
+php/keys.example.json 安全的空白示例
+php/keys.json        本机 key 白名单（运行时生成，已忽略，禁止提交）
 php/data/state.json  运行时状态（最近事件环 / 待发帧 / 待回请求；可随时删除）
 ```
 
@@ -13,8 +18,11 @@ php/data/state.json  运行时状态（最近事件环 / 待发帧 / 待回请�
 
 ```bash
 cd php
+cp keys.example.json keys.json
 php -S 127.0.0.1:8080 dsh-relay.php
 ```
+
+PowerShell 使用 `Copy-Item .\keys.example.json .\keys.json`。`keys.json`、`data/*.json` 与 `data/*.lock` 均已加入 `.gitignore`；它们是本机运行数据，不属于源码。
 
 Windows 上最省事的是直接双击 **`php\start-relay.cmd`**（自动找 XAMPP 的 php、打印端点、关闭窗口即停止）。
 
@@ -135,6 +143,36 @@ curl -s "$BASE/instances/$ID/response?id=req-xxxx" | jq
 
 - 这是**测试后端**：状态放在 `php/data/state.json`（不含会话正文，只有最近事件环与待发帧），
   key 明文放在 `php/keys.json`。生产环境请把 key 存进数据库/密钥管理，并要求 HTTPS。
+- 若旧版本曾把 `php/keys.json` 提交进 Git，单纯删除工作树文件并不能清除历史；公开仓库前必须轮换该 key，并使用历史清理工具移除旧对象。
 - 管理接口默认只对"没设置 `DSH_RELAY_ADMIN_KEY`"的本地测试开放；一旦对外提供服务，
   **必须**设置 `DSH_RELAY_ADMIN_KEY`，否则任何人都能下发命令。
 - 别在公网暴露 `php -S`。它没有超时保护、没有并发控制，只适合本机/内网联调。
+
+---
+
+## English
+
+`dsh-relay.php` is a single-file, dependency-free PHP test relay with an embedded HTML console. It implements the protocol in `docs/API.md` and is intended for local or private-network integration testing, not production hosting.
+
+### Run
+
+```bash
+cd php
+cp keys.example.json keys.json
+php -S 127.0.0.1:8787 dsh-relay.php
+```
+
+Point the plugin at `http://127.0.0.1:8787/dsh-api`. The built-in page can inspect online instances, sessions, workspaces, recent events, queue requests, send prompts, interrupt work, and answer supported interactions. The Chinese section above contains the complete endpoint and curl reference.
+
+### Environment and concurrency
+
+Configuration includes the listen/base URL used by the plugin, key file/data paths, administrator key, polling duration, queue limits, and recent-event retention. Set `DSH_RELAY_ADMIN_KEY` whenever management access is not strictly localhost-only. On Unix-like systems, `PHP_CLI_SERVER_WORKERS` can provide multiple workers so long polling does not block unrelated requests; it is unavailable on Windows.
+
+The server writes lightweight runtime state under `php/data/state.json` and plaintext test keys under `php/keys.json`. Session transcript bodies are not intended as durable storage.
+
+### Security warning
+
+- Use this backend only for local/private testing. Production keys belong in a database or secret manager and all traffic must use HTTPS.
+- If a real `php/keys.json` ever entered Git history, deleting the working-tree file is insufficient: rotate the key and remove the historical object before publishing.
+- Exposed management routes without `DSH_RELAY_ADMIN_KEY` allow remote command execution against connected machines.
+- Never publish PHP's built-in development server directly to the Internet; it lacks production-grade timeout, concurrency, and hardening controls.

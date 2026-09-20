@@ -19,15 +19,23 @@
  */
 
 import { Bridge } from './lib/bridge.js'
+import { A2SRuntimeControl } from './lib/a2s-runtime-control.js'
+import { readA2SConfig, withA2SDefaults } from './lib/a2s-shared-config.js'
 import { Config, ENDPOINT_ENV, KEY_ENV, validateConfig } from './lib/config.js'
 import { registerConsole } from './lib/host-ui.js'
 import { Identity } from './lib/identity.js'
 import { Logger } from './lib/log.js'
 import { ConfigStore } from './lib/settings-store.js'
 import { PLUGIN_NAME, PLUGIN_VERSION, PROTOCOL_VERSION, nowIso } from './lib/version.js'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const PLUGIN_ROOT = dirname(fileURLToPath(import.meta.url))
 
 export { Config }
 export { Bridge }
+export { A2SRuntimeControl }
+export { defaultA2SConfigFile, readA2SConfig, withA2SDefaults } from './lib/a2s-shared-config.js'
 export { ConfigStore }
 export { CONSOLE_BASE, CONSOLE_ROUTES } from './lib/host-ui.js'
 export { PLUGIN_NAME, PLUGIN_VERSION, PROTOCOL_VERSION }
@@ -54,9 +62,16 @@ export const name = 'dsh2server'
  * @returns {void} the plugin starts asynchronously through its effect.
  */
 export function apply(ctx, rawConfig) {
+  // A profile may pin a dedicated shared-config file (useful for portable
+  // installs and deterministic tests); otherwise use the platform default.
+  const sharedConfigFile = typeof rawConfig?.a2sConfigFile === 'string'
+    ? rawConfig.a2sConfigFile.trim()
+    : ''
+  const shared = readA2SConfig(sharedConfigFile || undefined)
+  const effectiveComposition = withA2SDefaults(rawConfig ?? {}, shared)
   // Cordis already validated the config through `Config`; validating again makes
   // the module directly usable (tests, scripts) and keeps defaults in one place.
-  const validated = validateConfig(rawConfig)
+  const validated = validateConfig(effectiveComposition)
   if (validated.issues) {
     const detail = validated.issues
       .map((issue) => `${issue.path ? `${issue.path.join('.')}: ` : ''}${issue.message}`)
@@ -68,9 +83,9 @@ export function apply(ctx, rawConfig) {
   // row key by key. The store owns ONE config object and mutates it in place, so
   // the bridge, host adapter, and forwarders always observe the current values.
   const logger = new Logger('info', { ctx })
-  const store = new ConfigStore({ composition: rawConfig ?? {}, logger })
+  const store = new ConfigStore({ composition: effectiveComposition, logger })
 
-  if ((rawConfig?.endpoint ?? '') === '' || (Array.isArray(rawConfig?.endpoint) && rawConfig.endpoint.length === 0)) {
+  if ((effectiveComposition.endpoint ?? '') === '' || (Array.isArray(effectiveComposition.endpoint) && effectiveComposition.endpoint.length === 0)) {
     logger.info(
       `${PLUGIN_NAME} ${PLUGIN_VERSION}: no endpoint on the loader row — open ` +
         `Settings → Plugins → dsh2server in the web GUI to set one, or export ${ENDPOINT_ENV}.`,
@@ -79,6 +94,7 @@ export function apply(ctx, rawConfig) {
 
   /** @type {Bridge | undefined} */
   let bridge
+  let runtimeControl
   let disposed = false
 
   ctx.effect(() => {
@@ -92,6 +108,7 @@ export function apply(ctx, rawConfig) {
           await store.clear().catch(() => undefined)
         }
         logger.setLevel(store.config.logLevel)
+        if (shared) logger.info(`using the shared A2S device identity from ${shared.file}`)
 
         const identity = await new Identity({
           keyFile: store.config.keyFile,
@@ -104,6 +121,15 @@ export function apply(ctx, rawConfig) {
 
         bridge = new Bridge({ ctx, config: store.config, identity, logger })
         bridge.start()
+        if (shared?.file) {
+          runtimeControl = new A2SRuntimeControl({ sharedFile: shared.file, bridge, logger, installPath: PLUGIN_ROOT })
+          try {
+            await runtimeControl.start()
+          } catch (error) {
+            logger.warn(`A2S local control is unavailable: ${String(error)}`)
+            runtimeControl = undefined
+          }
+        }
         // Wait for the Connection service rather than probing once: the web
         // composition may mount it after this plugin, and a headless profile
         // never mounts it at all — in which case the console simply never
@@ -118,7 +144,10 @@ export function apply(ctx, rawConfig) {
     return async () => {
       disposed = true
       const current = bridge
+      const currentRuntimeControl = runtimeControl
       bridge = undefined
+      runtimeControl = undefined
+      if (currentRuntimeControl) await currentRuntimeControl.dispose()
       if (current) await current.dispose()
     }
   })

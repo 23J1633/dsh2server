@@ -1,4 +1,8 @@
+[中文](#中文) | [English](#english)
+
 # 参考后端（reference relay）
+
+## 中文
 
 这里是一个**零依赖、可直接运行**的 `dsh2server` 服务器实现。它的作用是：
 
@@ -119,3 +123,48 @@ curl -s -X POST $BASE/instances/$ID/request -H 'content-type: application/json' 
 - **两种载体一套协议**：`ingest()` 处理来自 WebSocket 和 HTTP 长轮询的同一批帧，换成任何语言实现时也只是"从 socket 读"与"从 HTTP body 读"的差别。
 - **两种协议一套部署**：HTTP 与 HTTPS 监听器共用处理器，不需要为明文/加密各写一套逻辑。
 - **key 轮换即吊销**：删除 key → 该机器下次重连被拒 → 登记新 key → 自动恢复（`test/e2e.test.js` 里有完整断言）。
+
+---
+
+## English
+
+This directory contains a zero-dependency executable reference relay for `dsh2server`. It is both an implementation companion to `docs/API.md` and a convenient local debugger. Production multi-Agent deployments should use the top-level `server-api` project instead.
+
+### Files and run commands
+
+- `server.js`: HTTP/HTTPS/WebSocket relay, key registry, management routes, queues, events, and protocol handling.
+- `keys.example.json`: safe allowlist example.
+
+```bash
+# Local HTTP on 127.0.0.1:8787
+node examples/server.js
+
+# Custom port and key file
+DSH_RELAY_PORT=8787 DSH_RELAY_KEYS_FILE=./keys.json node examples/server.js
+
+# Optional HTTPS listener
+DSH_RELAY_TLS_PORT=8443 \
+DSH_RELAY_TLS_CERT=/path/fullchain.pem \
+DSH_RELAY_TLS_KEY=/path/privkey.pem \
+node examples/server.js
+```
+
+When management routes are reachable from anything other than localhost, set `DSH_RELAY_ADMIN_KEY` and send it in `x-admin-key`. Never expose test keys or plaintext control traffic publicly.
+
+### Protocol surfaces
+
+Agents use WebSocket `/dsh-api/ws` or HTTP `/dsh-api/events` plus `/dsh-api/inbox`. Operators use health, key registration, instance listing/details, event streams, and per-instance request routes. Both carriers feed the same frame ingestion logic, so behavior is equivalent apart from latency.
+
+### End-to-end workflow
+
+Register a machine key, wait for the instance to appear, list sessions/workspaces, subscribe to events, issue a `session.prompt`, and use interrupt/pause/resume as required. Key rotation intentionally rejects the old value until the new value is registered. The exact curl examples are provided in the Chinese section above.
+
+### Design properties demonstrated
+
+- Runtime instance, event, and queue state can remain in memory; reconnecting Agents reconstruct it after restart.
+- One key maps to one machine, naturally isolating requests across devices.
+- WebSocket and HTTP long polling carry the same protocol frames.
+- HTTP and HTTPS listeners share one request handler.
+- Deleting/rotating a key immediately revokes later reconnect attempts.
+
+The automated E2E, multi-endpoint, and Cordis tests run against this implementation.

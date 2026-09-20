@@ -92,6 +92,7 @@ test('e2e: connects over WebSocket with the registered instance key', async () =
   const peer = await startBridge({ relay, host, key })
   try {
     await waitFor(() => relay.instances.size === 1, 5000, 'the relay to see the instance')
+    await waitFor(() => peer.bridge.isConnected(), 5000, 'the bridge to finish its hello handshake')
     const instance = [...relay.instances.values()][0]
     assert.equal(instance.keyFingerprint, fingerprint(key))
     assert.equal(instance.transport, 'ws')

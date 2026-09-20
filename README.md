@@ -1,18 +1,42 @@
+[中文](#中文) | [English](#english)
+
 # dsh2server
+
+## 中文
 
 把本机的 **DeepSeek Harness（dsh）** 连接到一台中转服务器：服务器上能看到这台机器的**实时工作状态、全部工作目录和会话活动**，并能对它下发操作（**新命令、中断、暂停/恢复、审批应答、任务终止、会话管理**）。
 
 - **dsh 主动连出**，服务器不需要访问你的电脑，不需要端口映射，不需要内网穿透。
-- **服务器只是中转**：协议不要求服务器保存任何会话内容；唯一需要落盘的是你自己的机器白名单。
-- **每台机器一个唯一 key**，插件首次启动自动生成，服务器用"多 key 白名单"管理任意多台电脑，撤销某台机器不影响其它机器。
+- **服务器不保存会话正文**：只持久化机器白名单和控制台归档索引；会话内容仍由已连接的 dsh 提供。
+- **每台机器一个统一 key**：在 A2S 模式下自动读取与 Claude/Codex 相同的 `a2sk_` 设备 key；独立使用时仍可生成原有 `dshk_` key。服务器可按设备整体配对和吊销。
 - **`http://` 与 `https://` 同等支持，并且可以同时连多个端点**：例如内网一台 `http://` 中转给本地控制台用，公网一台 `https://` 供远程访问。每条连接互相独立，一个端点掉线不影响其它端点。
 - **零运行时依赖**：纯 ESM JavaScript，无需构建，使用 Node 内置的 `fetch` / `WebSocket`。
 - **一套固定 API**：WebSocket 与 HTTP 长轮询两种载体共享同一套 JSON 帧，后端用任何语言/框架实现都可以。完整规范见 [`docs/API.md`](docs/API.md)。
 
 ---
 
+## A2S 生态（同系列开源仓库）
+
+dsh2server 只是 **A2S** 体系中的一个插件。同体系还有**通用控制台**与**手机端**——它们与本插件共用同一个 `a2sk_` 设备 key、同一套协议，可以单独取用，也可以和本插件一起用：
+
+| 仓库 | 定位 | 说明 |
+|---|---|---|
+| [`server-api`](https://github.com/23J1633/server-api) | **通用控制台（Web）** | 统一服务器端，同时接收 Claude Code、Codex 与 DSH 的连接，自带多 Agent Web 控制台。**正式部署用它**；只有单独跑 DSH、不接其它两个 Agent 时才需要本仓库内的 `dsh-api/` |
+| [`A2Switch`](https://github.com/23J1633/A2Switch) | **通用控制台（桌面）+ 插件配置路由** | Electron 桌面控制中心：维护跨桥接器共享的设备配置与 key、检测本机 Agent 环境、一键安装/更新三个插件、启动与停止桥接进程 |
+| [`a2s_app`](https://github.com/23J1633/a2s_app) | **手机控制端** | Flutter Android 客户端，在手机上查看机器状态与会话活动、下发远程操作 |
+| [`cc2server`](https://github.com/23J1633/cc2server) | Claude Code 桥接器 | 把 Claude Code 接入 A2S 协议 |
+| [`codex2server`](https://github.com/23J1633/codex2server) | Codex 桥接器 | 基于官方 Codex app-server 的桥接器 |
+| [`dsh2server`](https://github.com/23J1633/dsh2server) | 本仓库 | DeepSeek Harness 插件，也就是你正在读的这个 |
+| `dsh-api/`（本仓库内） | **DSH 专用控制台** | 旧版单 Agent 的服务器 + 控制台，保留给 DSH 独立部署与兼容性测试。见 [DSH 专用控制台（dsh-api）](#dsh-专用控制台dsh-api) |
+
+> 三个桥接器用**同一个**设备 key、各自独立的实例 ID（`<device-id>:claude` / `:codex` / `:dsh`），服务器端会把它们聚合为同一台设备，同时仍能单独选择具体 Agent。
+
+---
+
 ## 目录
 
+- [A2S 生态（同系列开源仓库）](#a2s-生态同系列开源仓库)
+- [A2S 统一模式](#a2s-统一模式推荐)
 - [快速开始](#快速开始)
 - [安装](#安装)
 - [配置](#配置)
@@ -26,6 +50,59 @@
 - [开发与测试](#开发与测试)
 - [安全须知](#安全须知)
 - [常见问题](#常见问题)
+
+---
+
+## A2S 统一模式（推荐）
+
+与 A2Switch、`cc2server`、`codex2server` 一起使用时，不需要为 DSH 单独复制 key 或重复填写服务器。插件会在 DSH profile 没有显式设置对应字段时读取 A2S 共享配置：
+
+| 系统 | 默认共享配置 |
+|---|---|
+| Windows | `%APPDATA%\A2S\config.json` |
+| macOS | `~/Library/Application Support/A2S/config.json` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/a2s/config.json` |
+
+它从中继承：
+
+- `device.key`：与 Claude、Codex 共用的设备 key；
+- `device.id`：统一设备 ID；
+- `device.name`：默认显示名；
+- `server.endpoints`：统一服务器端点；
+- `agents.dsh.instanceId`：默认是 `<device-id>:dsh`。
+- `agents.dsh.locale`：插件语言，默认 `system`，自动识别运行电脑的语言。
+
+推荐流程：
+
+```powershell
+# 1. 先在 A2Switch 中填写服务器并完成设备配对
+# 2. 安装 DSH 插件（A2Switch 的一键安装也会执行这一步）
+dsh plugin --profile web add D:\Project\A2S\dsh2server
+
+# 3. 启动原有 DSH profile
+dsh web
+```
+
+共享配置只填补 DSH profile 中缺失的字段，不会覆盖已经显式写入的 DSH 专用配置。优先级为：
+
+```text
+DSH2SERVER_* 环境变量 / profile 显式值
+    ＞ A2S 共享配置
+    ＞ dsh2server 自身默认值
+```
+
+可用 `A2S_CONFIG_PATH` 或 `A2S_CONFIG_DIR` 改变共享配置位置；也可以在 profile 中设置 `a2sConfigFile`，给该 profile 固定一个配置文件。后者也用于便携式安装与测试隔离。
+
+新的统一服务器基路径为 `/a2s-api`。`server-api` 同时保留 `/dsh-api` 别名，因此旧配置无需立即迁移。
+
+### A2Switch 本地启停
+
+`dsh2server 0.1.1` 起，插件会在 A2S 共享配置旁维护一个不含密钥的本地运行状态与控制通道：
+
+- `runtime/dsh.json`：插件版本、Harness PID、连接/暂停状态及最近一次控制结果；
+- `runtime/dsh-control.json`：A2Switch 写入的一次性 `start`、`stop` 或 `restart` 指令。
+
+A2Switch 的“停止”只关闭到服务器的桥接链路并发送正常 `bye`，不会结束 DeepSeek Harness、Web UI 或本地会话；“启动”会恢复链路；“重启”会在同一个 Harness 进程内重建全部链路。控制文件受本机配置目录权限保护，且不保存设备 key。
 
 ---
 
@@ -72,7 +149,7 @@ dsh plugin --profile <name> add /path/to/dsh2server
 dsh plugin --profile <name> add github:<you>/dsh2server
 
 # 从 tarball 安装
-pnpm pack && dsh plugin --profile <name> add ./dsh2server-0.1.0.tgz
+pnpm pack && dsh plugin --profile <name> add ./dsh2server-1.0.0.tgz
 ```
 
 安装后：
@@ -161,13 +238,16 @@ DSH2SERVER_KEY=<可选：固定 key，不落盘>
 |---|---|---|
 | `key` | `''` | 留空 = 自动生成并保存在本机；填写 = 使用该 key 且不落盘 |
 | `keyFile` | `''` | 身份文件路径，默认 `<DSH_HOME>/dsh2server/identity.json` |
+| `a2sConfigFile` | `''` | 可选的 A2S 共享配置文件；留空使用系统默认位置 |
+| `deviceId` | `''` | 设备聚合 ID；A2S 模式通常自动继承，不需要手填 |
 | `authMode` | `hello` | key 的传递方式：`hello` / `header` / `query` |
 | `transport` | `auto` | `auto`（先 WebSocket 再回退 HTTP）/ `ws` / `http` |
+| `locale` | `system` | 插件设置页与插件状态语言：`system` / `zh-CN` / `en-US` |
 | `autoSubscribeSessions` | `running` | 自动推送哪些会话的逐条事件：`none` / `running` / `all` |
 | `forwardApprovals` | `false` | 是否把**工具调用审批**转发到服务器等待远程批准 |
-| `forwardQuestions` | `false` | 是否把**结构化提问**转发到服务器 |
+| `forwardQuestions` | `true` | 是否把**结构化提问**转发到服务器；关闭后远程会话遇到提问只能回本机处理 |
 | `allowRemotePrompt` | `true` | 是否允许远程下发新命令 |
-| `allowRemoteControl` | `true` | 是否允许远程中断/暂停/切策略/轮换 key |
+| `allowRemoteControl` | `true` | 是否允许远程中断/暂停/切策略/轮换 key（同时管着权限预设的切换与插件配置的写入） |
 | `allowRemoteCommand` | `true` | 是否允许远程执行斜杠命令（如 `/compact`） |
 | `allowedCwdPrefixes` | `[]` | 非空时，只有工作目录匹配这些前缀的会话才可见/可控 |
 | `logLevel` | `info` | `silent` / `error` / `warn` / `info` / `debug` |
@@ -188,11 +268,14 @@ DSH2SERVER_KEY=<可选：固定 key，不落盘>
 
 | 区域 | 能做什么 |
 |---|---|
-| 服务器 API 端点 | 多行文本框，一行一个 URL（`http` / `https` 可混用）。**保存后立即生效，无需重启 dsh** |
+| 服务器 API 端点 | 独立端点列表，每个 URL 可单独添加、编辑或移除（`http` / `https` 可混用）。**保存后立即生效，无需重启 dsh** |
 | 传输方式 | `auto` / `ws` / `http` 下拉（PHP 后端选 `http`） |
+| 插件语言 | 自动跟随系统 / 简体中文 / English；保存后立即生效，也可由 A2Switch 统一配置 |
 | 本机实例 Key | 指纹展示、`显示` 完整 key、**`复制 Key`** 一键复制、`复制登记命令`（生成可直接执行的 curl）、`轮换 Key` |
 | 连接状态 | 每条链路的实时状态（已连接 / 未连接 / 被拒绝）与拒绝原因 |
 | 远程权限 | `allowRemotePrompt` / `allowRemoteControl` / `forwardApprovals` 开关 |
+
+语言设置只影响 dsh2server 自己的配置页、提示和上报元数据，不会翻译 DSH 会话正文。显式选择会写入网页设置层；选择“自动跟随系统”时使用浏览器/运行电脑语言。网页层没有显式覆盖时，profile 中的 `zh-CN` / `en-US` 可固定语言；profile 为默认 `system` 时则继续采用 A2Switch 写入的 `agents.dsh.locale`。
 
 ### 它是怎么出现的（对使用者完全透明）
 
@@ -322,6 +405,26 @@ transport: 'http'        # PHP 无法升级 WebSocket；写 auto 也会自动回
 
 细节见 [`php/README.md`](php/README.md)。
 
+### DSH 专用控制台（dsh-api）
+
+[`dsh-api/`](dsh-api/) 是本仓库自带的 **DSH 专用控制台**——它只认 DSH 一种 Agent。它既是协议的另一份中转实现（WebSocket + HTTP 长轮询，依赖 `ws` 与 `marked`），也自带一个**复刻 dsh 本地界面**的图形控制台：左侧机器与会话列表、中间对话流与工具调用、右侧状态栏，外加独立的轨迹页，并把本机 dsh 的扩展能力位一路透传到界面。想直接拿一个能用的"云端运维视角"界面、且只跑 DSH 时用它，不必自己从管理接口拼。
+
+> 需要同时管 Claude Code、Codex 和 DSH，或用手机看，请改用通用控制台 [`server-api`](https://github.com/23J1633/server-api)、[`A2Switch`](https://github.com/23J1633/A2Switch) 与 [`a2s_app`](https://github.com/23J1633/a2s_app)，见 [A2S 生态](#a2s-生态同系列开源仓库)。
+
+```bash
+cd dsh-api
+npm install
+npm start                       # 默认 :50443；证书路径在 dsh-api/lib/config.js，读不到则退回明文 HTTP
+
+# 手边没有真实 dsh 时，用模拟器把每个面板的数据跑起来
+npm run sim
+npm run selftest                # 端到端自检
+```
+
+运行期数据（key 白名单、管理密钥、归档索引、日志）落在 `~/.dsh-relay`，可用 `DSH_RELAY_DATA_DIR` 改到别处；仓库里那份 `.runtime-manual/` 就是这样一个手动指定的数据目录，已被 git 忽略。
+
+> 本目录面向**旧版单 Agent**的独立部署与兼容性测试。A2S 正式部署请用 `server-api`——它支持 Claude / Codex / DSH 共用设备 key、统一设备聚合和多 Agent 控制台，并继续兼容 `/dsh-api` 路径。详见 [`dsh-api/README.md`](dsh-api/README.md)。
+
 ---
 
 ## 远程能做什么
@@ -365,6 +468,32 @@ transport: 'http'        # PHP 无法升级 WebSocket；写 auto 也会自动回
 4. `session.resume` 时按顺序放行，并在 `session/resumed` 事件里报告 `delivered` 数量。
 
 排队上限由 `pauseQueueLimit` 控制；队满时返回 `conflict`（`retryable: true`），服务器应稍后重试。
+
+### 扩展能力（让云端界面达到本机 UI 的完整度）
+
+在协议 v1 的方法之外，插件还实现了 [`PLUGIN-EXT`](docs/API.md#14-扩展能力plugin-ext) 描述的八个扩展。
+它们**按能力位探测**：实现了才出现在 `hello.capabilities` / `instance.info.capabilities`，
+服务器据此点亮或隐藏对应界面。
+
+| 能力位 | 方法 | 有什么用 |
+|---|---|---|
+| `sessionEvents` | `session.events` | **原始事件窗口**：真实日志序号与时间戳，够渲染轨迹视图、每轮用时、步数、tok/s、上下文环 |
+| `messageFeedback` | `message.feedback` | 助手消息的 👍 / 👎；读回时随 `session.events` 一起返回 |
+| `permissionPresets` | `session.permission` | 输入框左侧的「完全权限 / 工作区写 / 只读」三级预设 |
+| `agentPresets` | `agentPreset.list` / `read` / `select` / `copy` / `delete` | 与本地相同的 Agent 预设名单、会话选择及用户预设管理 |
+| `attachments` | `attachment.put` / `attachment.get` | 上传图片与文件，并在 `session.prompt` 的 `content` 里引用 |
+| `workspaceMutation` | `workspace.create` / `rename` / `remove` | 工作区的新建 / 改名 / 删除（**只动登记关系，不碰磁盘**） |
+| `sessionArchive` | `session.archive` | 通过 DSH 官方注册表归档会话（本地列表隐藏，日志保留） |
+| `fileBrowser` | `workspace.fs.list` / `workspace.fs.read` | 右侧栏「文件」面板，只读预览 |
+| `pluginManagement` | `plugin.list` / `config` / `setConfig` / `setEnabled` | 设置 → 插件：看清单、读配置表单、改配置、启停 |
+
+还有两个不需要新方法的载荷增强：`tool/call` 事件带上模型写在参数里的**意图描述**
+（`data.description`），`turn/end` 事件带上**本轮文件改动**（`data.files`）。
+
+**`terminal` 有意不实现**。本 harness 的终端服务是按 Agent 拥有、面向行的交互模型，没有原始
+字节流、没有 `cols/rows` 重排、也没有推送式输出，无法做成云端 xterm 需要的那种持久终端；
+按扩展规范的说明，这种情况回退到现有 `job.list` + `job.read` 即可，服务器在缺少该能力位时会
+自动改用 job 面板。
 
 ---
 
@@ -432,7 +561,7 @@ dsh2server/
 │   ├── bridge.js           # 实例级状态：身份、事件序号、环形缓冲、方法表
 │   ├── link.js             # 单端点连接：载体、订阅、心跳、退避（可多条并存）
 │   ├── transport/          # WebSocket 与 HTTP 长轮询载体
-│   ├── ops/                # 全部入站方法
+│   ├── ops/                # 全部入站方法（含 session.events / attachment / permission / plugin）
 │   ├── forward.js          # 宿主事件转发（含审批/提问应答）
 │   ├── host.js             # 能力探测与宿主适配
 │   ├── gate.js             # 暂停/恢复状态机
@@ -444,6 +573,7 @@ dsh2server/
 ├── scripts/show-key.js     # 打印本机 key
 ├── examples/               # 参考后端（Node，可运行）+ 极简 WebSocket 服务端
 ├── php/                    # 参考后端（PHP 单文件）+ 内置网页测试台
+├── dsh-api/                # DSH 专用控制台 + 中转实现（复刻 dsh 本地界面）
 ├── docs/API.md             # ★ 服务器接口规范
 └── test/                   # 单元 + 端到端 + 多端点/双协议 + PHP + 真实 Cordis 集成测试
 ```
@@ -453,8 +583,9 @@ dsh2server/
 ## 开发与测试
 
 ```bash
-npm test                        # 全部测试（单元、端到端、多端点/双协议、PHP 后端、真实 Cordis 集成）
+npm test                        # 全部测试（单元、扩展、端到端、多端点/双协议、PHP 后端、真实 Cordis 集成）
 node --test test/unit.test.js
+node --test test/extensions.test.js  # PLUGIN-EXT 的八个扩展：方法契约、能力位、事件载荷
 node --test test/e2e.test.js
 node --test test/multi-endpoint.test.js
 node --test test/php-relay.test.js   # 找不到 PHP 时自动跳过（可用 PHP_BIN 指定）
@@ -512,3 +643,91 @@ node --test test/php-relay.test.js   # 找不到 PHP 时自动跳过（可用 PH
 
 **Q：能同时管理多少台机器？**
 没有上限——服务器侧就是一张 key 表，每台机器是独立的一条连接（或同时多条，如果它配了多个端点）。
+
+## 许可证
+
+代码采用 MIT License，见 `LICENSE`。DeepSeek 与 DeepSeek Harness 名称和相关图标属于各自权利人，本项目是独立的兼容插件。
+
+---
+
+## English
+
+`dsh2server` is a DeepSeek Harness plugin that connects a local DSH host to an A2S relay. The server can observe live status, workspaces, sessions, tools, approvals, questions, tasks, goals, and attachments, and can send prompts, interrupts, pause/resume, interaction responses, and other negotiated operations. DSH connects outbound, so the workstation needs no inbound port or tunnel.
+
+### A2S ecosystem (sibling repositories)
+
+`dsh2server` is one plugin in the **A2S** family. The family also ships a **universal console** and a **mobile client**. All of them share the same `a2sk_` device key and the same protocol, so you can take any one of them on its own or together with this plugin:
+
+| Repository | Role | Notes |
+|---|---|---|
+| [`server-api`](https://github.com/23J1633/server-api) | **Universal console (web)** | Unified server side — accepts Claude Code, Codex and DSH connections and serves a multi-Agent web console. **Use this for a real deployment**; the in-repo `dsh-api/` is only for running DSH by itself |
+| [`A2Switch`](https://github.com/23J1633/A2Switch) | **Universal console (desktop) + plugin config routing** | Electron desktop control center: one shared device config and key, local Agent detection, one-click install/update of all three plugins, and start/stop of the bridge processes |
+| [`a2s_app`](https://github.com/23J1633/a2s_app) | **Mobile client** | Flutter Android client for checking machine status and sessions and sending remote operations from a phone |
+| [`cc2server`](https://github.com/23J1633/cc2server) | Claude Code bridge | Connects Claude Code to the A2S protocol |
+| [`codex2server`](https://github.com/23J1633/codex2server) | Codex bridge | Bridge built on the official Codex app-server |
+| [`dsh2server`](https://github.com/23J1633/dsh2server) | This repository | The DeepSeek Harness plugin described here |
+| `dsh-api/` (in this repo) | **DSH-only console** | Legacy single-Agent server plus console, kept for standalone DSH deployment and compatibility testing |
+
+> All three bridges share **one** device key but use distinct instance IDs (`<device-id>:claude` / `:codex` / `:dsh`), so the server aggregates them into a single device while still letting you target a specific Agent.
+
+### Recommended A2S setup
+
+1. Configure and pair the workstation in A2Switch.
+2. Open A2Switch **Plugins** and choose **Install/update all**. A2Switch copies the plugin and runs the DSH registration command itself.
+3. Restart the selected Harness profile once so the newly registered plugin is loaded.
+
+The default registration target is `web`; set `A2S_DSH_PROFILE` before starting A2Switch to choose another profile. The equivalent manual command is:
+
+```powershell
+dsh plugin --profile web add C:\path\to\dsh2server
+dsh web
+```
+
+In unified mode the plugin reads missing endpoint, device key, device/instance identity, transport, and locale values from the shared A2Switch configuration. Explicit DSH environment/profile settings remain higher priority, so an existing specialized profile is not silently overwritten.
+
+### Standalone setup
+
+Install the local directory, GitHub source, or a tarball with `dsh plugin --profile <name> add <source>`. Configure at least an endpoint and instance/device key through the bundle patch, profile settings, or `DSH2SERVER_*` environment variables. For public service use HTTPS/WSS; the plugin can force HTTP long polling with `transport: http` when WebSocket upgrades are blocked.
+
+### Configuration and UI
+
+The bundle contributes its own Harness settings page for endpoint(s), key, transport, language, reconnect/heartbeat behavior, approval forwarding, file limits, and optional capabilities. Simplified Chinese and English are available; `system` follows the browser/host locale. Saving settings redraws the page and reconnects when required.
+
+Sensitive keys are masked in UI/log output. A2Switch shared settings only fill absent profile fields. Environment variables and explicit profile values win, followed by shared configuration and built-in defaults.
+
+### Capabilities
+
+The plugin discovers the running Harness host and advertises only supported operations. Depending on host capabilities, the unified catalog includes:
+
+- instance info, health, ping, key rotation, and runtime metadata;
+- session list/create/history/prompt/interrupt/rename/fork/archive;
+- live assistant/tool/trajectory events with replay and subscriptions;
+- workspaces, restricted files, attachments, and feedback;
+- approvals, structured questions, tasks, goals, models, permissions, and Agent presets;
+- plugin list/configuration/enable state;
+- optional remote terminals with strict limits and disabled-by-default policy.
+
+The browser client bundle is injected through the DSH plugin extension points without modifying Harness core files. Missing host services produce an honest reduced capability catalog instead of fake success responses.
+
+### Transport, liveness, and recovery
+
+`auto` prefers WebSocket and falls back to HTTP long polling after retryable network/upgrade failures. Frames share protocol v1 across both carriers. Heartbeats, exponential reconnect with jitter, multiple endpoint failover, monotonic event sequences, bounded replay buffers, and runtime/control records allow A2Switch and the server to recover from transient loss without stopping Harness sessions.
+
+A2Switch can stop/start/restart only the relay link through `runtime/dsh-control.json`; it does not kill the Harness host. Authentication and protocol errors are fatal until configuration changes, avoiding endless reconnect storms.
+
+### Security
+
+The device key authorizes this workstation and must not be committed. Approval forwarding is disabled by default because enabling it allows a remote server operator to approve local tool calls. Remote terminal is also disabled by default. File access remains within approved workspaces, payloads and terminal replay are bounded, and keys are excluded from runtime records and logs.
+
+### Development and tests
+
+```powershell
+npm install
+npm test
+```
+
+The suite covers bundle composition, configuration precedence, shared A2S settings, transports and multi-endpoint failover, replay, runtime control, host UI injection, sessions, workspaces, attachments, plugins, terminal behavior, archives, and end-to-end protocol flows. The zero-dependency Node reference relay lives in `examples/`; the PHP test backend lives in `php/`; `dsh-api/` is the DSH-only console — a second relay implementation that also serves a graphical console mirroring the local dsh UI, kept for the legacy single-Agent standalone deployment and for compatibility testing.
+
+### License
+
+MIT. DeepSeek and DeepSeek Harness names and marks remain owned by their respective rights holders. This is an independent compatibility plugin.

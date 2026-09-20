@@ -264,6 +264,36 @@ test('multi: an unreachable endpoint does not stop the others', async () => {
   }
 })
 
+test('multi: local control suspends and resumes relay links without stopping DSH', async () => {
+  const key = testKey('local-control')
+  const relay = await createRelayServer({ keys: [key], port: 0 })
+  const peer = await startBridge({
+    endpoints: [relay.url],
+    key,
+    host: new FakeHost(),
+    config: { instanceId: 'dsh-local-control' },
+  })
+  try {
+    await waitFor(() => relay.instances.has('dsh-local-control'), 10000, 'the bridge to connect')
+
+    await peer.bridge.suspend('test stop')
+    assert.equal(peer.bridge.describe().state, 'suspended')
+    assert.equal(peer.bridge.suspended, true)
+    await waitFor(() => !relay.instances.has('dsh-local-control'), 5000, 'the relay to observe suspension')
+
+    await peer.bridge.resume('test start')
+    assert.equal(peer.bridge.suspended, false)
+    await waitFor(() => relay.instances.has('dsh-local-control'), 10000, 'the bridge to resume')
+
+    await peer.bridge.restart('test restart')
+    await waitFor(() => peer.bridge.isConnected(), 10000, 'the bridge to reconnect after restart')
+    assert.equal(peer.bridge.describe().state, 'connected')
+  } finally {
+    await peer.close()
+    await relay.close()
+  }
+})
+
 test('multi: a failing endpoint in one scheme does not block the other scheme', async () => {
   const key = testKey('schemes')
   const tls = await tlsFixture()

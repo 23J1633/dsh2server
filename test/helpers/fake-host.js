@@ -148,7 +148,29 @@ export class FakeSession {
     this.seq = 1
     /** @type {Array<Record<string, unknown>>} */
     this.events = []
+    /** @type {Array<Record<string, unknown>>} the durable event log, as a real session keeps it. */
+    this.logEvents = []
     this.agent = new FakeAgent(options.id, this)
+  }
+
+  /**
+   * @param {number} [fromSeq] inclusive first sequence number.
+   * @param {number} [toSeqExclusive] exclusive last sequence number.
+   * @returns {readonly Record<string, unknown>[]} the requested log slice.
+   */
+  snapshotEvents(fromSeq = 0, toSeqExclusive = Number.MAX_SAFE_INTEGER) {
+    return this.logEvents.filter((event) => Number(event.seq) >= fromSeq && Number(event.seq) < toSeqExclusive)
+  }
+
+  /**
+   * Append one event to the durable log.
+   *
+   * @param {Record<string, unknown>} event a `SessionEvent`.
+   * @returns {Record<string, unknown>} the appended event.
+   */
+  appendLogEvent(event) {
+    this.logEvents.push(event)
+    return event
   }
 
   /** @returns {Array<Record<string, unknown>>} derived transcript. */
@@ -186,6 +208,40 @@ export class FakeHost {
     ]
     this.goal = undefined
     this.approvalPolicy = undefined
+    /** @type {Array<Record<string, any>>} message feedback rows. */
+    this.feedback = []
+    /** @type {string} the deployment's current permission preset name. */
+    this.permission = 'workspace-write'
+    /** @type {Array<Record<string, any>>} path-free Agent-preset roster. */
+    this.agentPresetRows = [
+      { id: 'standard', name: 'Standard', description: 'Full coding agent', trust: 'system', isDefault: true },
+      { id: 'minimal', name: 'Minimal', description: 'Single-tool agent', trust: 'system', isDefault: false },
+    ]
+    /** @type {Array<Record<string, string>>} accepted preset selections. */
+    this.agentPresetSelections = []
+    /** @type {Map<string, Uint8Array>} stored attachment bytes by harness reference id. */
+    this.attachmentBytes = new Map()
+    /** @type {Array<Record<string, any>>} registered workspaces. */
+    this.workspaces = [
+      {
+        workspaceId: 'ws-1',
+        path: 'C:/work/project',
+        title: 'Project',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        sessionIds: ['session-a'],
+      },
+    ]
+    /** @type {Array<Record<string, any>>} every config/enablement write the bridge made. */
+    this.pluginWrites = []
+    /** @type {Map<string, Record<string, any>>} files the fake filesystem serves. */
+    this.files = new Map([
+      ['C:/work/project', { type: 'directory' }],
+      ['C:/work/project/notes.txt', { type: 'file', size: 11, text: 'hello world' }],
+      ['C:/work/project/blob.bin', { type: 'file', size: 4096, bytes: new Uint8Array([0, 1, 2, 3]) }],
+      ['C:/work/project/src', { type: 'directory' }],
+      ['C:/work/project/src/index.ts', { type: 'file', size: 3, text: 'ok\n' }],
+    ])
     /** @type {Map<string, Set<Function>>} */
     this.jobListeners = new Set()
     /** @type {Set<Function>} */
@@ -233,8 +289,10 @@ export class FakeHost {
       },
       create: async (request) => {
         const id = request.sessionId ?? `session-${self.sessions.size + 1}`
-        self.sessions.set(id, new FakeSession({ id, cwd: request.cwd }))
-        return { sessionId: id }
+        const session = new FakeSession({ id, cwd: request.cwd })
+        session.header.agentPreset = request.agentPreset ?? 'standard'
+        self.sessions.set(id, session)
+        return { sessionId: id, agentPreset: session.header.agentPreset }
       },
       prompt: async (request) => {
         const session = self.sessions.get(String(request.sessionId))
@@ -309,17 +367,25 @@ export class FakeHost {
       },
       overrideOf: () => self.approvalPolicy,
     }
+    // The registry publishes `id`; the controller publishes `workspaceId`. The
+    // host adapter has to read both, so the fake keeps each layer's own spelling.
     const workspaceRegistry = {
-      list: () => [
-        {
-          id: 'ws-1',
-          path: 'C:/work/project',
-          title: 'Project',
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-02T00:00:00.000Z',
-          sessionIds: [...self.sessions.keys()],
-        },
-      ],
+      archivedSessionIds: [],
+      list: () =>
+        self.workspaces.map((workspace) => ({
+          id: workspace.workspaceId,
+          path: workspace.path,
+          title: workspace.title,
+          createdAt: workspace.createdAt,
+          updatedAt: workspace.updatedAt,
+          sessionIds: workspace.sessionIds,
+        })),
+      archiveSession: async (sessionId) => {
+        if (!self.sessions.get(sessionId)) {
+          throw new Error(`session "${sessionId}" not found`)
+        }
+        if (!workspaceRegistry.archivedSessionIds.includes(sessionId)) workspaceRegistry.archivedSessionIds.push(sessionId)
+      },
     }
     const sessionProjections = {
       snapshot: () => ({ asOfSeq: 3, values: { todos: [{ id: 't1', text: 'ship it', status: 'pending' }] } }),
@@ -328,7 +394,278 @@ export class FakeHost {
         return () => self.projectionListeners.delete(listener)
       },
     }
-    return { sessions, agents, sessionController, jobs, goals, commands, approval, workspaceRegistry, sessionProjections }
+    const messageFeedback = {
+      list: async ({ sessionId }) => ({
+        ok: true,
+        value: {
+          items: self.feedback
+            .filter((row) => row.sessionId === sessionId)
+            .map((row) => ({ messageId: row.messageId, rating: row.rating, version: row.version, createdAt: row.createdAt, updatedAt: row.updatedAt })),
+        },
+      }),
+      put: async ({ sessionId, messageId, rating }) => {
+        const now = Date.now()
+        const existing = self.feedback.find((row) => row.sessionId === sessionId && row.messageId === messageId)
+        if (existing === undefined) {
+          const row = { sessionId, messageId, rating, version: `v${self.feedback.length + 1}`, createdAt: now, updatedAt: now }
+          self.feedback.push(row)
+          return { ok: true, value: row }
+        }
+        existing.rating = rating
+        existing.updatedAt = now
+        existing.version = `${existing.version}+`
+        return { ok: true, value: existing }
+      },
+      delete: async ({ sessionId, messageId }) => {
+        self.feedback = self.feedback.filter((row) => !(row.sessionId === sessionId && row.messageId === messageId))
+        return { ok: true, value: { absent: true } }
+      },
+    }
+    const permissionPresets = {
+      names: ['read-only', 'workspace-write', 'danger-full-access'],
+      current: () => self.permission,
+      resolve: (name) => {
+        if (!['read-only', 'workspace-write', 'danger-full-access'].includes(name)) throw new Error(`no preset ${name}`)
+        return { sandbox: name, approval: 'ask' }
+      },
+      // The real service folds the same three knob events and resolves the
+      // preset from the resulting state; a cold session reads through here.
+      selectFor: (state) => ({
+        options: ['read-only', 'workspace-write', 'danger-full-access'].map((name) => ({ value: name, name })),
+        currentValue: state?.preset ?? state?.sandbox ?? 'workspace-write',
+      }),
+      set: (_session, name) => {
+        self.permission = name
+      },
+    }
+    const agentPresets = {
+      defaultId: 'standard',
+      authorable: true,
+      remoteExportList: async () => ({
+        presets: self.agentPresetRows.map((row) => ({ ...row })),
+        authorable: true,
+        modeSelectionEnabled: true,
+      }),
+      readDocument: async (agentPreset) => {
+        const preset = self.agentPresetRows.find((row) => row.id === agentPreset)
+        if (!preset) {
+          const error = new Error(`preset "${agentPreset}" not found`)
+          error.code = 'agent-preset/not-found'
+          throw error
+        }
+        return { agentPreset, trust: preset.trust, name: preset.name, description: preset.description, content: `- $id: ${agentPreset}\n` }
+      },
+      select: async (agent, agentPreset) => {
+        if (!self.agentPresetRows.some((row) => row.id === agentPreset)) {
+          const error = new Error(`preset "${agentPreset}" not found`)
+          error.code = 'agent-preset/not-found'
+          throw error
+        }
+        agent.session.header.agentPreset = agentPreset
+        self.agentPresetSelections.push({ sessionId: agent.id, agentPreset })
+        return agentPreset
+      },
+      remoteExportCopy: async (from, agentPreset, name) => {
+        const source = self.agentPresetRows.find((row) => row.id === from)
+        if (!source) throw new Error(`preset "${from}" not found`)
+        self.agentPresetRows.push({ ...source, id: agentPreset, name: name ?? agentPreset, trust: 'user', isDefault: false })
+      },
+      remoteExportDelete: async (agentPreset) => {
+        const preset = self.agentPresetRows.find((row) => row.id === agentPreset)
+        if (preset?.trust !== 'user') {
+          const error = new Error(`preset "${agentPreset}" is read-only`)
+          error.code = 'agent-preset/read-only'
+          throw error
+        }
+        self.agentPresetRows = self.agentPresetRows.filter((row) => row.id !== agentPreset)
+      },
+    }
+    const attachments = {
+      saveImage: async ({ data, mediaType, name }) => {
+        const ref = { attachmentId: 'img-1', mediaType, bytes: data.byteLength, width: 2, height: 2, name }
+        self.attachmentBytes.set(ref.attachmentId, data)
+        return ref
+      },
+      admitEncodedFile: async ({ data, name }) => {
+        const bytes = Buffer.from(data, 'base64')
+        const ref = { attachmentId: 'file-1', name: name ?? 'file', bytes: bytes.byteLength }
+        self.attachmentBytes.set(ref.attachmentId, new Uint8Array(bytes))
+        return ref
+      },
+      readImage: async (ref) => ({ ref, data: self.attachmentBytes.get(ref.attachmentId) ?? new Uint8Array() }),
+      readFileStream: async function* (ref) {
+        yield self.attachmentBytes.get(ref.attachmentId) ?? new Uint8Array()
+      },
+    }
+    const fileUploads = {
+      upload: async (_agent, request) => ({
+        receiptId: `rcpt-${self.attachmentBytes.size}`,
+        file: { attachmentId: 'file-1', name: request.name ?? 'file', bytes: Buffer.from(request.data, 'base64').byteLength },
+      }),
+    }
+    const fs = {
+      resolve: async (path) => ({ targetKey: path, displayPath: path }),
+      processPath: (target) => target.displayPath,
+      stat: async (target) => {
+        const entry = self.files.get(target.displayPath)
+        return entry === undefined ? undefined : { version: 'v1', type: entry.type, size: entry.size }
+      },
+      readText: async (target) => {
+        const entry = self.files.get(target.displayPath)
+        if (entry?.text === undefined) throw new Error('not text')
+        return entry.text
+      },
+      readBytes: async (target) => self.files.get(target.displayPath)?.bytes ?? new Uint8Array(),
+      readByteRange: async (target, range) => (self.files.get(target.displayPath)?.bytes ?? new Uint8Array()).slice(range.offset, range.offset + range.length),
+      listDir: async (target) => {
+        const prefix = `${target.displayPath}/`
+        const seen = new Map()
+        for (const [path, entry] of self.files) {
+          if (!path.startsWith(prefix) || path === target.displayPath) continue
+          const name = path.slice(prefix.length).split('/')[0]
+          if (seen.has(name)) continue
+          seen.set(name, {
+            name,
+            type: path.slice(prefix.length).includes('/') ? 'directory' : entry.type,
+            target: { targetKey: `${prefix}${name}`, displayPath: `${prefix}${name}` },
+            size: entry.size,
+          })
+        }
+        return [...seen.values()]
+      },
+    }
+    const workspaceController = {
+      archiveSession: async ({ sessionId }) => {
+        await workspaceRegistry.archiveSession(sessionId)
+        return { archivedSessionIds: [...workspaceRegistry.archivedSessionIds] }
+      },
+      create: async ({ path }) => {
+        const existing = self.workspaces.find((entry) => entry.path === path)
+        if (existing !== undefined) return { workspace: existing, created: false }
+        const workspace = {
+          workspaceId: `ws-${self.workspaces.length + 1}`,
+          path,
+          title: path,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          sessionIds: [],
+        }
+        self.workspaces.push(workspace)
+        return { workspace, created: true }
+      },
+      rename: async ({ workspaceId, title }) => {
+        const workspace = self.workspaces.find((entry) => entry.workspaceId === workspaceId)
+        if (workspace === undefined) throw new Error(`workspace "${workspaceId}" not found`)
+        workspace.title = title
+        return { workspace }
+      },
+      delete: async ({ workspaceId }) => {
+        self.workspaces = self.workspaces.filter((entry) => entry.workspaceId !== workspaceId)
+        return { deleted: true }
+      },
+      follow: async function* () {
+        // The follow stream is only observed, never driven, in these tests.
+      },
+    }
+    const pluginInventory = {
+      list: async () => ({
+        entries: [
+          { entryId: 'p-one', moduleName: 'pkg-one', enabled: true, fiberPhase: 'active' },
+          { entryId: 'p-two', moduleName: 'pkg-two', enabled: false, fiberPhase: null },
+        ],
+        agentPresets: [{ id: 'standard', trust: 'system', isDefault: true, rows: [{ entryId: 'p-tool', moduleName: 'pkg-tool', enabled: true, fiberPhase: 'active' }] }],
+      }),
+    }
+    // Entries are stable objects so `update()` behaves like the real Loader's:
+    // the change is applied in place and every later read sees it.
+    const loaderEntries = new Map([
+      ['p-one', { id: 'p-one', name: 'pkg-one', disabled: false, config: { answer: 42 }, fiber: { state: 2 } }],
+      ['p-two', { id: 'p-two', name: 'pkg-two', disabled: true, config: {}, fiber: { state: 0 } }],
+      ['p-tool', { id: 'p-tool', name: 'pkg-tool', disabled: false, config: {}, fiber: { state: 2 } }],
+    ])
+    const loader = {
+      resolve: (id) => {
+        const entry = loaderEntries.get(id)
+        if (entry === undefined) return undefined
+        return {
+          options: {
+            id: entry.id,
+            name: entry.name,
+            get config() {
+              return entry.config
+            },
+          },
+          get disabled() {
+            return entry.disabled
+          },
+          fiber: entry.fiber,
+          update: async (patch) => {
+            self.pluginWrites.push({ id, patch })
+            if (patch.config !== undefined) entry.config = patch.config
+            if (patch.disabled !== undefined) entry.disabled = patch.disabled
+          },
+        }
+      },
+      import: async (name) => {
+        if (name !== 'pkg-one') return {}
+        return {
+          Config: {
+            toJSON: () => ({
+              uid: 1,
+              refs: {
+                0: { type: 'string', meta: {} },
+                2: { type: 'const', meta: {}, value: 'a' },
+                3: { type: 'const', meta: {}, value: 'b' },
+                4: { type: 'union', meta: { default: 'a', description: 'pick one' }, list: [2, 3] },
+                5: { type: 'number', meta: { default: 42 } },
+                1: { type: 'object', meta: { default: {} }, dict: { answer: 5, mode: 4 } },
+              },
+            }),
+          },
+        }
+      },
+    }
+    // Cold reads go through the persistence handle, exactly as the real
+    // backend does: `read(offset, length)` slices the stored log, and an
+    // omitted length means "to the end".
+    const sessionPersistence = {
+      open: async (id) => {
+        const session = self.sessions.get(String(id))
+        if (session === undefined) {
+          const error = new Error(`no stored session "${id}"`)
+          error.name = 'SessionPersistenceNotFoundError'
+          throw error
+        }
+        return {
+          id,
+          read: async (offset = 0, length) => ({
+            events: session.logEvents.slice(offset, length === undefined ? undefined : offset + length),
+          }),
+          close: async () => {},
+        }
+      },
+    }
+    return {
+      sessions,
+      agents,
+      sessionController,
+      sessionPersistence,
+      jobs,
+      goals,
+      commands,
+      approval,
+      workspaceRegistry,
+      sessionProjections,
+      messageFeedback,
+      permissionPresets,
+      agentPresets,
+      attachments,
+      fileUploads,
+      fs,
+      workspaceController,
+      pluginInventory,
+      loader,
+    }
   }
 
   /**

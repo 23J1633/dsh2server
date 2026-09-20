@@ -6,3 +6,9 @@ Thumbs.db
 .vscode/
 coverage/
 *.tgz
+php/keys.json
+php/data/*.json
+php/data/*.lock
+!php/keys.example.json
+!php/data/.gitkeep
+examples/keys.json

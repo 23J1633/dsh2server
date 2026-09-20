@@ -49,6 +49,8 @@ test('config: applies defaults and tolerates an empty endpoint', () => {
   assert.equal(result.value.endpoint, '')
   assert.equal(result.value.authMode, 'hello')
   assert.equal(result.value.transport, 'auto')
+  assert.equal(result.value.locale, 'system')
+  assert.equal(result.value.forwardQuestions, true)
   assert.equal(result.value.heartbeatMs, 30000)
   assert.deepEqual(result.value.autoSubscribe, ['instance', 'sessions', 'jobs', 'approvals'])
 })
@@ -70,6 +72,8 @@ test('config: rejects a short explicit key and unknown auto-subscribe topics', (
   assert.ok(shortKey.issues.some((issue) => issue.path?.[0] === 'key'))
   const badTopic = validateConfig({ autoSubscribe: ['sessions', 'nonsense'] })
   assert.ok(badTopic.issues.some((issue) => issue.path?.[0] === 'autoSubscribe'))
+  const badLocale = validateConfig({ locale: 'fr-FR' })
+  assert.ok(badLocale.issues.some((issue) => issue.path?.[0] === 'locale'))
 })
 
 test('util: endpoint parsing accepts http(s) and ws(s) with and without a path', () => {
@@ -327,6 +331,50 @@ test('operations: session lifecycle, prompts, pause/resume, jobs, goals, and com
   const workspaces = await run('workspace.list', {})
   assert.equal(workspaces.result.source, 'workspace-registry')
   assert.equal(workspaces.result.items[0].path, 'C:/work/project')
+})
+
+test('operations: session.get returns the controller cut and projections for a cold session', async () => {
+  const host = new FakeHost()
+  const coldSummary = {
+    sessionId: 'session-cold',
+    updatedAt: 123,
+    running: false,
+    blank: false,
+    cwd: 'C:/work/project',
+    projections: {
+      asOfSeq: 49,
+      values: {
+        agentPreset: 'standard',
+        modelSelection: { next: { provider: 'fake', model: 'fake-model', reasoningEffort: 'high' } },
+        inbox: { 'next-turn': [{ id: 'queued' }], 'next-step': [] },
+      },
+    },
+  }
+  const sessionController = {
+    ...host.services.sessionController,
+    list: async () => ({ items: [coldSummary] }),
+  }
+  const ctx = host.context({
+    sessions: { list: () => [], get: () => undefined },
+    agents: { list: () => [], roots: () => [], get: () => undefined },
+    sessionController,
+  })
+  const bridge = new Bridge({ ctx, config: testConfig(), identity: await identity(), logger: new Logger('silent') })
+
+  const detail = await bridge.operations.dispatch(
+    'session.get',
+    { sessionId: 'session-cold' },
+    { signal: new AbortController().signal },
+  )
+
+  assert.equal(detail.ok, true)
+  assert.equal(detail.result.attached, false)
+  assert.equal(detail.result.status, 'detached')
+  assert.equal(detail.result.header.cwd, 'C:/work/project')
+  assert.equal(detail.result.seq, 49)
+  assert.equal(detail.result.projections.asOfSeq, 49)
+  assert.equal(detail.result.model.model, 'fake-model')
+  assert.deepEqual(detail.result.pending, { nextTurn: 1, nextStep: 0 })
 })
 
 test('operations: cwd allowlist blocks a session outside the configured prefixes', async () => {

@@ -248,11 +248,12 @@ function statePayload(overrides = {}) {
       endpoints: ['https://relay.example.com/dsh-api'],
       endpoint: 'https://relay.example.com/dsh-api',
       transport: 'auto',
+      locale: 'system',
       allowRemotePrompt: true,
       allowRemoteControl: true,
       forwardApprovals: false,
     },
-    editableKeys: ['endpoint', 'transport'],
+    editableKeys: ['endpoint', 'transport', 'locale'],
     overriddenKeys: [],
     compositionKeys: ['endpoint'],
     configFile: 'D:/dsh/data/dsh2server/config.json',
@@ -414,7 +415,12 @@ test('client bundle: the panel fetches state, saves the endpoint, and copies the
         const body = JSON.parse(init.body)
         const endpoints = body.values?.endpoint ?? payload.config.endpoints
         payload = statePayload({
-          config: { ...payload.config, endpoints, transport: body.values?.transport ?? payload.config.transport },
+          config: {
+            ...payload.config,
+            endpoints,
+            transport: body.values?.transport ?? payload.config.transport,
+            locale: body.values?.locale ?? payload.config.locale,
+          },
           overriddenKeys: Object.keys(body.values ?? {}),
         })
       }
@@ -486,20 +492,73 @@ test('client bundle: the panel fetches state, saves the endpoint, and copies the
     assert.match(text, /dsh2server/, 'the card must title itself')
     assert.match(text, /1\/1 条链路已连接/, 'the badge must report link health')
     assert.match(text, /dshk_GUI_TEST…0000/, 'the key is shown as a fingerprint until revealed')
-    assert.equal(findAll(tree, (node) => node.type === 'textarea')[0].props.value, 'https://relay.example.com/dsh-api')
+    const endpointInputs = () =>
+      findAll(
+        tree,
+        (node) => node.type === 'input' && String(node.props.className || '').includes('dsh2server-endpoint-input'),
+      )
+    assert.equal(findAll(tree, (node) => node.type === 'textarea').length, 0, 'endpoints are not edited in a shared textarea')
+    assert.equal(endpointInputs()[0].props.value, 'https://relay.example.com/dsh-api')
     assert.match(text, /relay\.example\.com\/dsh-api/)
     assert.ok(calls.some((call) => call.url === `${CONSOLE_BASE}/state`), 'the panel must read /state on mount')
 
-    // ── editing and saving the endpoint ──────────────────────────────────────
-    const area = findAll(tree, (node) => node.type === 'textarea')[0]
-    area.props.onChange({ target: { value: 'http://10.0.0.5:8787/dsh-api\nhttps://relay.example.com/dsh-api' } })
+    // ── switching the plugin language ───────────────────────────────────────
+    const languageSelect = findAll(
+      tree,
+      (node) => node.type === 'select' && node.props.value === 'system',
+    )[0]
+    assert.ok(languageSelect, 'the plugin exposes an independent language selector')
+    languageSelect.props.onChange({ target: { value: 'en-US' } })
+    await new Promise((resolvePromise) => setImmediate(resolvePromise))
+    await new Promise((resolvePromise) => setImmediate(resolvePromise))
     tree = harness.render(module.Dsh2ServerPanel)
+    assert.match(collectText(tree).join(' '), /Plugin language/)
+    const localeCall = calls.find((call) => {
+      if (call.url !== `${CONSOLE_BASE}/config`) return false
+      return JSON.parse(call.init.body).values?.locale === 'en-US'
+    })
+    assert.ok(localeCall, 'language selection must persist through /config')
+    const englishLanguageSelect = findAll(
+      tree,
+      (node) => node.type === 'select' && node.props.value === 'en-US',
+    )[0]
+    englishLanguageSelect.props.onChange({ target: { value: 'zh-CN' } })
+    await new Promise((resolvePromise) => setImmediate(resolvePromise))
+    await new Promise((resolvePromise) => setImmediate(resolvePromise))
+    tree = harness.render(module.Dsh2ServerPanel)
+
+    // ── editing and saving the endpoint ──────────────────────────────────────
+    endpointInputs()[0].props.onChange({ target: { value: 'http://10.0.0.5:8787/dsh-api' } })
+    tree = harness.render(module.Dsh2ServerPanel)
+    button(tree, '添加服务器端点').props.onClick()
+    tree = harness.render(module.Dsh2ServerPanel)
+    assert.equal(endpointInputs().length, 2, 'adding creates a separate endpoint field')
+    endpointInputs()[1].props.onChange({ target: { value: 'https://relay.example.com/dsh-api' } })
+    tree = harness.render(module.Dsh2ServerPanel)
+    button(tree, '添加服务器端点').props.onClick()
+    tree = harness.render(module.Dsh2ServerPanel)
+    assert.equal(endpointInputs().length, 3)
+    const removeThird = findAll(
+      tree,
+      (node) => node.type === 'button' && node.props['aria-label'] === '移除端点 3',
+    )[0]
+    assert.ok(removeThird, 'every endpoint has its own remove action')
+    removeThird.props.onClick()
+    tree = harness.render(module.Dsh2ServerPanel)
+    assert.deepEqual(
+      endpointInputs().map((input) => input.props.value),
+      ['http://10.0.0.5:8787/dsh-api', 'https://relay.example.com/dsh-api'],
+      'removing one endpoint preserves the other independent fields',
+    )
     const save = button(tree, '保存并应用')
     assert.equal(save.props.disabled, false, 'the save button enables once the form is dirty')
-    assert.equal(button(harness.render(module.Dsh2ServerPanel), '恢复配置文件的值').props.disabled, true, 'nothing to reset yet')
+    assert.equal(button(harness.render(module.Dsh2ServerPanel), '恢复配置文件的值').props.disabled, false, 'the language override can be reset')
 
     await save.props.onClick()
-    const configCall = calls.find((call) => call.url === `${CONSOLE_BASE}/config`)
+    const configCall = calls.find((call) => {
+      if (call.url !== `${CONSOLE_BASE}/config`) return false
+      return Array.isArray(JSON.parse(call.init.body).values?.endpoint)
+    })
     assert.ok(configCall, 'saving must POST /config')
     assert.deepEqual(JSON.parse(configCall.init.body).values.endpoint, [
       'http://10.0.0.5:8787/dsh-api',
@@ -521,7 +580,7 @@ test('client bundle: the panel fetches state, saves the endpoint, and copies the
     const reset = button(tree, '恢复配置文件的值')
     await reset.props.onClick()
     const resetCall = calls.filter((call) => call.url === `${CONSOLE_BASE}/config`).pop()
-    assert.deepEqual(JSON.parse(resetCall.init.body).reset, ['endpoint', 'transport'])
+    assert.deepEqual(JSON.parse(resetCall.init.body).reset, ['endpoint', 'transport', 'locale'])
 
     // ── rotating the key ─────────────────────────────────────────────────────
     // The rotate handler is a block body that deliberately does not return its

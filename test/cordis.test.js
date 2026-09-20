@@ -131,7 +131,11 @@ test('cordis: an idle plugin still mints an identity so the GUI can show its key
     // identity, because the whole pairing flow is "open the GUI, copy the key,
     // register it on the server, then set the endpoint there".
     const ctx = new cordis.Context()
-    const fiber = ctx.plugin(plugin, { endpoint: '', logLevel: 'silent' })
+    const fiber = ctx.plugin(plugin, {
+      endpoint: '',
+      logLevel: 'silent',
+      a2sConfigFile: join(dir, 'missing-a2s-config.json'),
+    })
     await fiber.await().catch(() => undefined)
     // `apply` does its work inside an effect, so the identity lands asynchronously.
     await waitFor(

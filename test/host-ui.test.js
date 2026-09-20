@@ -137,6 +137,7 @@ test('console: the Host half serves state and reconfigures through the real Conn
     const plugin = await import('../index.js')
     fiber = stack.ctx.plugin(plugin, {
       endpoint: relayA.url,
+      a2sConfigFile: join(dir, 'missing-a2s-config.json'),
       transport: 'http',
       pollWaitMs: 300,
       logLevel: 'silent',
@@ -297,6 +298,7 @@ test('console: an invalid stored layer is discarded at load instead of blocking 
     const logger = new Logger('silent')
     fiber = stack.ctx.plugin(plugin, {
       endpoint: relay.url,
+      a2sConfigFile: join(dir, 'missing-a2s-config.json'),
       key,
       instanceId: 'dsh-console-bad',
       transport: 'http',

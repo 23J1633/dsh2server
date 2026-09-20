@@ -1,6 +1,6 @@
 {
   "name": "dsh2server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": false,
   "description": "DeepSeek Harness plugin: connects the local dsh instance outbound to a central relay server over a fixed HTTP + WebSocket API, streaming live work status and workspace/session state and accepting remote control operations.",
   "keywords": [
